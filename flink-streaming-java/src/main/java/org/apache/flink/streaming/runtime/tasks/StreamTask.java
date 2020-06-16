@@ -42,6 +42,7 @@ import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.StateBackendLoader;
 import org.apache.flink.runtime.state.TaskStateManager;
 import org.apache.flink.runtime.taskmanager.DispatcherThreadFactory;
+import org.apache.flink.runtime.taskmanager.Task;
 import org.apache.flink.runtime.util.ExecutorThreadFactory;
 import org.apache.flink.runtime.util.FatalExitExceptionHandler;
 import org.apache.flink.streaming.api.TimeCharacteristic;
@@ -319,6 +320,17 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			}
 
 			processInput(actionContext);
+
+
+			synchronized (this) {
+				Task.ExecThread execThread = (Task.ExecThread) Thread.currentThread();
+				if (execThread.isSuspend()) {
+					LOG.info("task {} execThread suspend...", this.toString());
+					this.wait();
+					LOG.info("task {} execThread resume...", this.toString());
+				}
+			}
+
 		}
 	}
 

@@ -589,7 +589,16 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 				partitionStateChecker,
 				getRpcService().getExecutor());
 
-			log.info("Received task {}.", task.getTaskInfo().getTaskNameWithSubtasks());
+
+//			if (task.getTaskInfo().getTaskName().contains("Interpolation")) {
+//				task.setExecutingThreadPriority(9);
+//			} else if (task.getTaskInfo().getTaskName().contains("Bloom_Filter")) {
+//				task.setExecutingThreadPriority(9);
+//			} else if (task.getTaskInfo().getTaskName().contains("Range_Filter")) {
+//				task.setExecutingThreadPriority(10);
+//			}
+
+//			log.info("Received task {}. priority is {}", task.getTaskInfo().getTaskNameWithSubtasks(), task.getExecutingThreadPriority());
 
 			boolean taskAdded;
 
@@ -607,6 +616,12 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 					tdd.getJobId(),
 					tdd.getProducedPartitions(),
 					task.getTerminationFuture());
+
+				// add task on control
+				if (!task.getTaskInfo().getTaskName().contains("Source") && !task.getTaskInfo().getTaskName().contains("Sink")){
+					taskExecutorServices.addTaskOnControl(task.getExecutionId());
+				}
+
 				return CompletableFuture.completedFuture(Acknowledge.get());
 			} else {
 				final String message = "TaskManager already contains a task for id " +

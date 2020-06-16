@@ -28,6 +28,7 @@ import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.broadcast.BroadcastVariableManager;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
 import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
+import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.apache.flink.runtime.io.disk.iomanager.IOManagerAsync;
 import org.apache.flink.runtime.io.network.TaskEventDispatcher;
@@ -39,6 +40,7 @@ import org.apache.flink.runtime.state.TaskExecutorLocalStateStoresManager;
 import org.apache.flink.runtime.taskexecutor.slot.TaskSlotTable;
 import org.apache.flink.runtime.taskexecutor.slot.TimerService;
 import org.apache.flink.runtime.taskmanager.NettyShuffleEnvironmentConfiguration;
+import org.apache.flink.runtime.taskmanager.TaskExecutingThreadControlManager;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.runtime.util.ConfigurationParserUtils;
 import org.apache.flink.util.ExceptionUtils;
@@ -81,6 +83,8 @@ public class TaskManagerServices {
 	private final TaskExecutorLocalStateStoresManager taskManagerStateStore;
 	private final TaskEventDispatcher taskEventDispatcher;
 
+	private final TaskExecutingThreadControlManager taskExecutingThreadControlManager;
+
 	TaskManagerServices(
 		TaskManagerLocation taskManagerLocation,
 		MemoryManager memoryManager,
@@ -105,6 +109,8 @@ public class TaskManagerServices {
 		this.jobLeaderService = Preconditions.checkNotNull(jobLeaderService);
 		this.taskManagerStateStore = Preconditions.checkNotNull(taskManagerStateStore);
 		this.taskEventDispatcher = Preconditions.checkNotNull(taskEventDispatcher);
+
+		this.taskExecutingThreadControlManager = new TaskExecutingThreadControlManager(taskSlotTable);
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -213,6 +219,11 @@ public class TaskManagerServices {
 		if (exception != null) {
 			throw new FlinkException("Could not properly shut down the TaskManager services.", exception);
 		}
+	}
+
+	// add task on TaskExecutingThreadControlManager
+	public void addTaskOnControl(ExecutionAttemptID id) {
+		taskExecutingThreadControlManager.addTask(id);
 	}
 
 	// --------------------------------------------------------------------------------------------
