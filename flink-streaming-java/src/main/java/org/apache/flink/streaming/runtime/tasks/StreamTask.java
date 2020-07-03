@@ -328,6 +328,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 					LOG.info("task {} execThread suspend...", this.toString());
 					this.wait();
 					LOG.info("task {} execThread resume...", this.toString());
+					execThread.setSuspend(false);
 				}
 			}
 

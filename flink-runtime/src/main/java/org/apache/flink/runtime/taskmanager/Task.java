@@ -539,31 +539,30 @@ public class Task implements Runnable, TaskActions, PartitionProducerStateProvid
 		return totalBuffers;
 	}
 
-	public void setSuspend(boolean suspend) {
+	public void setTaskSuspend(boolean suspend) {
 //		LOG.info("task {} setSuspend {}", toString(), suspend);
-		if (suspend == this.suspend) {
+		if (suspend == ((ExecThread)executingThread).isSuspend()) {
 			LOG.info("task {} stays {}", toString(), suspend);
 			return;
 		}
-		this.suspend = suspend;
 		synchronized (invokable) {
-			((ExecThread)executingThread).setSuspend(suspend);
 //			LOG.info("set execThread suspend {}", suspend);
 			if (!suspend) {
 				LOG.info("task {} resume... syn:{}", toString(), invokable.toString());
 //				LOG.info("taskSuspend get lock");
 				invokable.notifyAll();
+				LOG.info("after first notify");
 				invokable.notifyAll();
+				LOG.info("after second notify");
+				invokable.notifyAll();
+				LOG.info("after third notify");
 //				LOG.info("after notify");
 //				LOG.info("complete resume...");
 			} else {
+				((ExecThread)executingThread).setSuspend(true);
 				LOG.info("task {} suspend...", toString());
 			}
 		}
-	}
-
-	public boolean isSuspend() {
-		return suspend;
 	}
 
 	// ------------------------------------------------------------------------

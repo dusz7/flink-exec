@@ -23,25 +23,33 @@ import org.apache.flink.runtime.taskexecutor.slot.TaskSlotTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.*;
 import java.util.Iterator;
 import java.util.LinkedList;
-import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.*;
 
 public class TaskExecutingThreadControlManager {
 	private static final Logger LOG = LoggerFactory.getLogger(TaskExecutingThreadControlManager.class);
 
-	private final static int THREAD_NUM = 4;
-	private final static int INITSCHEDULE_DELAY = 20000;
+	private final static int RUNNING_THREAD_NUM = 4;
+	private final static int EXTRA_THREAD_NUM = 1;
+	private final static int INIT_SCHEDULE_DELAY = 20000;
 	private final static int SCHEDULE_DELAY = 300;
+	private int runningThreadNum = RUNNING_THREAD_NUM;
+	private int extraThreadNum = EXTRA_THREAD_NUM;
+	private int initSchedulingDelay = INIT_SCHEDULE_DELAY;
+	private int schedulingDelay = SCHEDULE_DELAY;
+	//
+	private Properties threadControlProp;
 
 	private TaskSlotTable taskSlotTable;
 
 	private boolean hasTaskAdded = false;
 	private final String synControl = "";
 
-	private List<ExecutionAttemptID> waitingTasks;
-	private List<ExecutionAttemptID> runningTasks;
+	private LinkedList<ExecutionAttemptID> waitingTasks;
+	private LinkedList<ExecutionAttemptID> runningTasks;
 //	private BlockingQueue<ExecutionAttemptID> inQueueTasks;
 
 	// control thread state periodically
@@ -55,10 +63,26 @@ public class TaskExecutingThreadControlManager {
 //		inQueueTasks = new LinkedBlockingQueue<>();
 
 		threadPool = Executors.newSingleThreadScheduledExecutor();
+
+		try {
+			InputStream in = new BufferedInputStream(new FileInputStream(
+				new File("/usr/local/etc/flink-resource/conf/task-control.properties")));
+			threadControlProp = new Properties();
+			threadControlProp.load(in);
+			runningThreadNum = Integer.parseInt(threadControlProp.getProperty("RunningThreadNum"));
+			extraThreadNum = Integer.parseInt(threadControlProp.getProperty("ExtraThreadNum"));
+			initSchedulingDelay = Integer.parseInt(threadControlProp.getProperty("InitSchedulingDelay"));
+			schedulingDelay = Integer.parseInt(threadControlProp.getProperty("SchedulingDelay"));
+			LOG.info("read from properties, runningThreadNum:{}, extraThreadNum:{}, initDelay:{}, delay:{}", runningThreadNum, extraThreadNum, initSchedulingDelay, schedulingDelay);
+		} catch (FileNotFoundException e) {
+			LOG.warn("properties not found");
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 
 	private void onStart() {
-		threadPool.scheduleWithFixedDelay(new TaskThreadControlExecutor(), INITSCHEDULE_DELAY, SCHEDULE_DELAY, TimeUnit.MILLISECONDS);
+		threadPool.scheduleWithFixedDelay(new TaskThreadControlExecutor(), initSchedulingDelay, schedulingDelay, TimeUnit.MILLISECONDS);
 	}
 
 	public void addTask(ExecutionAttemptID id) {
@@ -92,35 +116,36 @@ public class TaskExecutingThreadControlManager {
 //			LOG.info("adjust Running Task... waiting lock");
 			synchronized (synControl) {
 				LOG.info("adjust Running Task get lock, runningTask num:{}, waitingTask num:{}",runningTasks.size(), waitingTasks.size());
-				// add all threads into waiting
+
 				long now = System.currentTimeMillis();
-				if (runningTasks.size() > 0) {
-					for (Iterator<ExecutionAttemptID> iterator = runningTasks.iterator(); iterator.hasNext();) {
-						Task runningTask = taskSlotTable.getTask(iterator.next());
-						if (null != runningTask) {
-							iterator.remove();
-							waitingTasks.add(runningTask.getExecutionId());
-						} else {
-							LOG.info("runningTask is null");
-							iterator.remove();
-						}
+				Task tempTask = null;
+
+				// add all threads into waiting
+				for (Iterator<ExecutionAttemptID> iterator = runningTasks.iterator(); iterator.hasNext();) {
+					tempTask = taskSlotTable.getTask(iterator.next());
+					if (null != tempTask) {
+						iterator.remove();
+						waitingTasks.add(tempTask.getExecutionId());
+					} else {
+						LOG.info("runningTask is null");
+						iterator.remove();
 					}
 				}
 
-				// get longest from all threads and resume
-				for (int i = 0; i < THREAD_NUM; i++) {
+				// add #THREAD_NUM longest threads into running & resume these tasks
+				for (int i = 0; i < runningThreadNum; i++) {
 					//find longest in waiting
 					Task longestTask = null;
 					int longestLength = -1;
 
 					for (Iterator<ExecutionAttemptID> iterator = waitingTasks.iterator(); iterator.hasNext();) {
-						Task waitingTask = taskSlotTable.getTask(iterator.next());
-						if (waitingTask != null) {
-							int length = waitingTask.getBufferInputQueueLength();
-							LOG.info("waitingTask {}, queue {}", waitingTask, length);
+						tempTask = taskSlotTable.getTask(iterator.next());
+						if (null != tempTask) {
+							int length = tempTask.getBufferInputQueueLength();
+							LOG.info("waitingTask {}, queue {}", tempTask, length);
 							if (length > longestLength) {
 								longestLength = length;
-								longestTask = waitingTask;
+								longestTask = tempTask;
 							}
 						} else {
 							LOG.info("waitingTask is null");
@@ -140,27 +165,36 @@ public class TaskExecutingThreadControlManager {
 					}
 				}
 
+				// add extra running tasks
+				for (int i = 0; i < extraThreadNum; i++) {
+					tempTask = taskSlotTable.getTask(waitingTasks.removeFirst());
+					if (null != waitingTasks) {
+						runningTasks.add(tempTask.getExecutionId());
+						resumeTask(tempTask);
+					}
+				}
+
 				// suspend others
 				for (Iterator<ExecutionAttemptID> iterator = waitingTasks.iterator(); iterator.hasNext();) {
-					Task realWaitingTask = taskSlotTable.getTask(iterator.next());
-					if (realWaitingTask != null) {
-						suspendTask(realWaitingTask);
+					tempTask = taskSlotTable.getTask(iterator.next());
+					if (null != tempTask) {
+						suspendTask(tempTask);
 					}
 				}
 
 				LOG.info("finish adjusting running task using {}ms", System.currentTimeMillis() - now);
-				LOG.info("	--------------------------------------");
+				LOG.info("++++++++++++++++++++++++++++++++++++++++++++++++++");
 			}
 //			LOG.info("adjust Running Task free lock");
 		}
 
 		private void suspendTask(Task task) {
-			task.setSuspend(true);
+			task.setTaskSuspend(true);
 //			LOG.info("finish suspendTask {}, now running num:{}, waiting num:{}",task, runningTasks.size(), waitingTasks.size());
 		}
 
 		private void resumeTask(Task task) {
-			task.setSuspend(false);
+			task.setTaskSuspend(false);
 //			LOG.info("finish resumeTask {}, now running num:{}, waiting num:{}",task, runningTasks.size(), waitingTasks.size());
 		}
 	}
